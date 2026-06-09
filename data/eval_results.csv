@@ -1,0 +1,202 @@
+id,query,category,difficulty,naive_latency,naive_retrieval_precision,naive_retrieval_recall,naive_retrieval_f1,naive_mrr,naive_faithfulness,naive_relevance,naive_hallucination_rate,naive_answer,prod_latency,prod_retrieval_precision,prod_retrieval_recall,prod_retrieval_f1,prod_mrr,prod_faithfulness,prod_relevance,prod_hallucination_rate,prod_answer
+0,How do I configure rate limiting in the API Gateway?,configuration,easy,0.03035902976989746,0.15,1.0,0.2608695652173913,1.0,1.0,0.9,0.18,"# API Gateway Configuration Guide: Rate Limiting Middleware
+
+Rate limiting is crucial for preventing denial-of-service (DoS) attacks, brute-force attempts, and API abuse. [1] ## Header injection
+
+When the rate limit is exceeded, the gateway responds with HTTP Status Code `429 Too Many Requests`. [2] Here is an example configuration block inside `gateway.config.yml`:
+
+```yaml
+gateway:
+  middlewares:
+    limiter:
+      enabled: true
+      driver: redis
+      redis_url: redis://localhost:6379/0
+      rules:
+        - key: client_ip
+          rate: 100/m  # 100 requests per minute
+          burst: 20
+        - key: api_key
+          rate: 1000/h # 1000 requests per hour
+          burst: 100
+```
+
+## Configuration Parameters. [3] ## Custom Error Responses
+
+You can customize the error message returned to clients when they hit the rate limit. [4] - **rate**: The maximum request threshold. [5] Valid options are `client_ip` (rate limits based on client IP address), `api_key` (rate limits based on the `X-API-Key` header), or `user_id` (rate limits based on the JWT subject claim). [6] This is where you configure load balancing models, TLS settings, and circuit breakers. [10] # OAuth2 Authentication and Authorization Policies
+
+Our enterprise microservices architecture implements OAuth2 protocols to secure API endpoints. [16] The API Gateway maps required scopes to specific URI routes. [19] Example configuration in `authz.yml`:
+
+```yaml
+authorization:
+  policies:
+    - path: /api/v1/billing/*
+      methods: [POST, PUT, DELETE]
+      required_scopes: [""billing:write"", ""admin""]
+    - path: /api/v1/billing/*
+      methods: [GET]
+      required_scopes: [""billing:read"", ""billing:write"", ""admin""]
+    - path: /api/v1/users/*
+      methods: [GET]
+      required_scopes: [""profile:read"", ""admin""]
+```. [20]",1.027991533279419,0.6,1.0,0.7499999999999999,1.0,1.0,0.9,0.17,"# API Gateway Configuration Guide: Rate Limiting Middleware
+
+Rate limiting is crucial for preventing denial-of-service (DoS) attacks, brute-force attempts, and API abuse. [1] ## Header injection
+
+When the rate limit is exceeded, the gateway responds with HTTP Status Code `429 Too Many Requests`. [2] Here is an example configuration block inside `gateway.config.yml`:
+
+```yaml
+gateway:
+  middlewares:
+    limiter:
+      enabled: true
+      driver: redis
+      redis_url: redis://localhost:6379/0
+      rules:
+        - key: client_ip
+          rate: 100/m  # 100 requests per minute
+          burst: 20
+        - key: api_key
+          rate: 1000/h # 1000 requests per hour
+          burst: 100
+```
+
+## Configuration Parameters. [3] Valid options are `client_ip` (rate limits based on client IP address), `api_key` (rate limits based on the `X-API-Key` header), or `user_id` (rate limits based on the JWT subject claim). [4] ## Custom Error Responses
+
+You can customize the error message returned to clients when they hit the rate limit. [5]"
+1,What is OAuth2 authentication flow?,authentication,medium,0.028821706771850586,0.15,1.0,0.2608695652173913,1.0,1.0,0.8,0.2,"# OAuth2 Authentication and Authorization Policies
+
+Our enterprise microservices architecture implements OAuth2 protocols to secure API endpoints. [1] ```http
+Authorization: Bearer <JWT_access_token>
+```
+
+The authentication filter intercepts the request and performs the following checks:. [2] Send a `POST` request to the token endpoint `/oauth2/token` with:
+   - `grant_type`: `refresh_token`
+   - `refresh_token`: The long-lived refresh token (valid for 30 days)
+   - `client_id` & `client_secret` (if confidential client)
+2. [3] ## Token Lifetime and Refresh Token Flow
+
+Access tokens are short-lived, with a default expiration time of 15 minutes. [7]",0.9459934234619141,0.6,1.0,0.7499999999999999,1.0,1.0,0.8,0.2,"# OAuth2 Authentication and Authorization Policies
+
+Our enterprise microservices architecture implements OAuth2 protocols to secure API endpoints. [1] Send a `POST` request to the token endpoint `/oauth2/token` with:
+   - `grant_type`: `refresh_token`
+   - `refresh_token`: The long-lived refresh token (valid for 30 days)
+   - `client_id` & `client_secret` (if confidential client)
+2. [2] ## Token Lifetime and Refresh Token Flow
+
+Access tokens are short-lived, with a default expiration time of 15 minutes. [3] ```http
+Authorization: Bearer <JWT_access_token>
+```
+
+The authentication filter intercepts the request and performs the following checks:. [4]"
+2,How does Istio service mesh handle traffic routing?,routing,hard,0.028467178344726562,0.15,1.0,0.2608695652173913,1.0,1.0,0.9,0.25,"# Service Mesh Routing and Traffic Management
+
+Our platform uses Istio Service Mesh to orchestrate microservice communication, route traffic dynamically, and build resilient services. [1] ```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: payment-service-policies
+spec:
+  host: payment-service
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 10
+        maxRequestsPerConnection: 10
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 10s. [2] ```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: payment-service-routes
+spec:
+  hosts:
+    - payment-service
+  http:
+    - match:
+        - headers:
+            version:
+              exact: v2
+      route:
+        - destination:
+            host: payment-service
+            subset: v2
+    - route:
+        - destination:
+            host: payment-service
+            subset: v1
+          weight: 90
+        - destination:
+            host: payment-service. [3] # API Gateway Configuration Guide: Rate Limiting Middleware
+
+Rate limiting is crucial for preventing denial-of-service (DoS) attacks, brute-force attempts, and API abuse. [4] ## DestinationRules
+
+A `DestinationRule` defines policies that apply to traffic intended for a service after routing has occurred. [5] During this time, no traffic will be routed to it. [7] - **maxEjectionPercent**: The maximum percentage of pods for a service that can be ejected at the same time. [8] Allows temporary burst traffic above the steady-state rate. [9] subset: v1
+          weight: 90
+        - destination:
+            host: payment-service
+            subset: v2
+          weight: 10
+```. [12] Example VirtualService configuration for a payment service:. [18] **Audience & Issuer verification**: The `aud` (audience) claim must match the service ID, and the `iss` (issuer) claim must match the configured identity provider URL. [19]",0.8217341899871826,0.6,1.0,0.7499999999999999,1.0,1.0,0.9,0.33,"# Service Mesh Routing and Traffic Management
+
+Our platform uses Istio Service Mesh to orchestrate microservice communication, route traffic dynamically, and build resilient services. [1] ```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: payment-service-routes
+spec:
+  hosts:
+    - payment-service
+  http:
+    - match:
+        - headers:
+            version:
+              exact: v2
+      route:
+        - destination:
+            host: payment-service
+            subset: v2
+    - route:
+        - destination:
+            host: payment-service
+            subset: v1
+          weight: 90
+        - destination:
+            host: payment-service. [2] ```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: payment-service-policies
+spec:
+  host: payment-service
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 10
+        maxRequestsPerConnection: 10
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 10s. [3] ## DestinationRules
+
+A `DestinationRule` defines policies that apply to traffic intended for a service after routing has occurred. [4] # API Gateway Configuration Guide: Rate Limiting Middleware
+
+Rate limiting is crucial for preventing denial-of-service (DoS) attacks, brute-force attempts, and API abuse. [5]"
