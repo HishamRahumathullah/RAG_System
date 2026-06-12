@@ -2,7 +2,7 @@ import sys
 import os
 
 # Add project root to Python path so 'src' imports work in In-Process mode
-project_root = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -12,6 +12,32 @@ import json
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+# ─────────────────────────────────────────────────────────────────────────
+# RENDER DEPLOYMENT: Backend URL from environment variable
+# ─────────────────────────────────────────────────────────────────────────
+# Render sets this automatically via render.yaml envVars
+# For local testing: export BACKEND_URL=http://localhost:8000
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+
+# Detect if we're running on Render (or any cloud platform)
+IS_CLOUD = os.environ.get("RENDER") or os.environ.get("STREAMLIT_SHARING_MODE")
+
+# Shared Qdrant client singleton (prevents file-lock collisions)
+# ─────────────────────────────────────────────────────────────────────────
+_qdrant_client = None
+_qdrant_client_path = None
+
+
+def get_local_qdrant_client(db_path: str):
+    global _qdrant_client, _qdrant_client_path
+    if _qdrant_client is None or _qdrant_client_path != db_path:
+        from qdrant_client import QdrantClient
+
+        _qdrant_client = QdrantClient(path=db_path)
+        _qdrant_client_path = db_path
+    return _qdrant_client
+
 
 # Page configuration
 st.set_page_config(
@@ -111,23 +137,71 @@ st.sidebar.image(
 )
 st.sidebar.title("Configuration")
 
+# ─────────────────────────────────────────────────────────────────────────
+# RENDER MODE: Auto-select API Gateway if BACKEND_URL is set
+# ─────────────────────────────────────────────────────────────────────────
+if os.environ.get("BACKEND_URL"):
+    # Backend URL is configured — default to API Gateway mode
+    api_mode_options = ["API Gateway (FastAPI)", "In-Process (Local Engine)"]
+    default_index = 0
+    st.sidebar.success(f"☁️ Backend configured: {BACKEND_URL}")
+else:
+    # Local mode — no backend URL set
+    api_mode_options = ["API Gateway (FastAPI)", "In-Process (Local Engine)"]
+    default_index = 1  # Default to In-Process for local
+
 api_mode = st.sidebar.selectbox(
-    "API Connection Mode", ["API Gateway (FastAPI)", "In-Process (Local Engine)"]
+    "API Connection Mode", api_mode_options, index=default_index
 )
+
+# Backend URL display (editable for debugging)
+with st.sidebar.expander("🔧 Backend Settings"):
+    BACKEND_URL = st.text_input("Backend URL", value=BACKEND_URL)
+
+    # Health check button
+    if st.button("🩺 Check Backend Health"):
+        try:
+            health = requests.get(f"{BACKEND_URL}/health", timeout=5)
+            if health.status_code == 200:
+                st.success(f"✅ Backend online: {health.json()}")
+            else:
+                st.warning(f"⚠️ Backend returned {health.status_code}")
+        except Exception as e:
+            st.error(f"❌ Cannot reach backend: {e}")
+
 use_openai = st.sidebar.checkbox("Use OpenAI (requires key)", value=False)
 if use_openai:
-    key_input = st.sidebar.text_input(
-        "OpenAI API Key", type="password", value=os.environ.get("OPENAI_API_KEY", "")
-    )
-    if key_input:
-        os.environ["OPENAI_API_KEY"] = key_input
+    # CLOUD: Use Streamlit secrets or Render env vars for API key
+    if IS_CLOUD:
+        try:
+            # Try Streamlit secrets first
+            key_input = st.secrets.get("OPENAI_API_KEY", "")
+            if key_input:
+                os.environ["OPENAI_API_KEY"] = key_input
+                st.sidebar.success("✅ OpenAI key loaded from secrets")
+            else:
+                # Fallback to environment variable
+                key_input = os.environ.get("OPENAI_API_KEY", "")
+                if key_input:
+                    st.sidebar.success("✅ OpenAI key loaded from env")
+                else:
+                    st.sidebar.warning("⚠️ Add OPENAI_API_KEY to secrets/env")
+        except Exception:
+            key_input = os.environ.get("OPENAI_API_KEY", "")
+            if not key_input:
+                st.sidebar.warning("⚠️ Add OPENAI_API_KEY to secrets/env")
+    else:
+        key_input = st.sidebar.text_input(
+            "OpenAI API Key",
+            type="password",
+            value=os.environ.get("OPENAI_API_KEY", ""),
+        )
+        if key_input:
+            os.environ["OPENAI_API_KEY"] = key_input
 else:
     st.sidebar.info(
         "Running in pure local offline mode using SentenceTransformers & BM25."
     )
-
-# Backend API URL
-API_URL = "http://localhost:8000"
 
 # Title header
 st.markdown(
@@ -154,7 +228,9 @@ with tab_chat:
     # Setup session state helper to fetch pipeline in local mode
     if api_mode == "In-Process (Local Engine)":
         db_path = "data/qdrant_db"
-        encoder_exists = os.path.exists(os.path.join(db_path, "bm25_encoder.pkl"))
+        encoder_exists = os.path.exists(
+            os.path.join(os.path.dirname(db_path), "bm25_encoder.pkl")
+        )
 
         if not encoder_exists:
             st.warning(
@@ -172,19 +248,23 @@ with tab_chat:
                             db_path=db_path,
                             collection_name="tech_docs",
                             use_openai=use_openai,
+                            client=get_local_qdrant_client(db_path),
                         )
                         st.success(f"Success! Indexed {result['num_chunks']} chunks.")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Ingestion failed: {e}")
         else:
-            # Pre-load local classes
+            # Pre-load local classes (reuse the shared Qdrant client)
             if "retriever" not in st.session_state:
                 from src.retrieval import HybridRetriever
                 from src.reranking import CrossEncoderReranker
 
                 st.session_state.retriever = HybridRetriever(
-                    db_path=db_path, collection_name="tech_docs", use_openai=use_openai
+                    db_path=db_path,
+                    collection_name="tech_docs",
+                    use_openai=use_openai,
+                    client=get_local_qdrant_client(db_path),
                 )
                 st.session_state.reranker = CrossEncoderReranker()
 
@@ -236,13 +316,13 @@ with tab_chat:
                                 for m in st.session_state.messages[:-1]
                             ]
                             res = requests.post(
-                                f"{API_URL}/ask",
+                                f"{BACKEND_URL}/ask",
                                 json={
                                     "query": query,
                                     "chat_history": history,
                                     "use_openai": use_openai,
                                 },
-                                timeout=60,  # INCREASED from 15 to 60
+                                timeout=60,
                             )
                             if res.status_code == 200:
                                 data = res.json()
@@ -252,14 +332,14 @@ with tab_chat:
                                 latency = data["latency"]
                             else:
                                 st.error(
-                                    f"Error from API Gateway: {res.json()['detail']}"
+                                    f"Error from API Gateway: {res.json().get('detail', res.text)}"
                                 )
                         except Exception as e:
                             st.error(
-                                f"Failed to connect to API Gateway at {API_URL}. Switch connection mode to 'In-Process' in the sidebar to run locally. Error: {e}"
+                                f"Failed to connect to API Gateway at {BACKEND_URL}. Error: {e}"
                             )
                     else:
-                        # Local execution
+                        # Local execution (In-Process mode)
                         import time
 
                         start_time = time.time()
@@ -367,7 +447,7 @@ with tab_eval:
                 try:
                     if api_mode == "API Gateway (FastAPI)":
                         res = requests.post(
-                            f"{API_URL}/ingest", params={"use_openai": use_openai}
+                            f"{BACKEND_URL}/ingest", params={"use_openai": use_openai}
                         )
                         if res.status_code == 200:
                             st.success("Re-ingestion completed on API Gateway.")
@@ -376,12 +456,18 @@ with tab_eval:
                     else:
                         from src.ingestion import ingest_documents
 
+                        client = get_local_qdrant_client("data/qdrant_db")
                         result = ingest_documents(
                             data_dir="data/raw_docs",
                             db_path="data/qdrant_db",
                             collection_name="tech_docs",
                             use_openai=use_openai,
+                            client=client,
                         )
+                        # Wipe cached retriever so it reloads the new BM25 encoder
+                        for key in ["retriever", "reranker"]:
+                            if key in st.session_state:
+                                del st.session_state[key]
                         st.success(
                             f"Success! Local collection recreated with {result['num_chunks']} chunks."
                         )
@@ -399,14 +485,16 @@ with tab_eval:
             try:
                 if api_mode == "API Gateway (FastAPI)":
                     res = requests.post(
-                        f"{API_URL}/eval",
+                        f"{BACKEND_URL}/eval",
                         params={"use_openai": use_openai},
-                        timeout=300,  # INCREASED from 120 to 300
+                        timeout=300,
                     )
                     if res.status_code == 200:
                         eval_data = res.json()
                     else:
-                        st.error(f"Evaluation request failed: {res.json()['detail']}")
+                        st.error(
+                            f"Evaluation request failed: {res.json().get('detail', res.text)}"
+                        )
                 else:
                     from src.evaluation import run_full_evaluation
 
@@ -416,6 +504,7 @@ with tab_eval:
                         collection_name="tech_docs",
                         output_path=results_file,
                         use_openai=use_openai,
+                        client=get_local_qdrant_client("data/qdrant_db"),
                     )
                     # Reload json file structure
                     with open(results_file, "r") as f:
