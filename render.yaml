@@ -1,0 +1,25 @@
+# render.yaml — Render Blueprint for RAG System
+services:
+  # Backend Service (FastAPI)
+  - type: web
+    name: rag-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    plan: free
+
+  # Frontend Service (Streamlit)
+  - type: web
+    name: rag-frontend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app/frontend.py --server.port 10000 --server.address 0.0.0.0
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: BACKEND_URL
+        value: https://rag-backend.onrender.com  # Will update after backend deploys
+    plan: free
